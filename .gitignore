@@ -1,0 +1,4 @@
+__pycache__/
+.venv/
+data/data_stream-moda.nc
+smoke_dir/
