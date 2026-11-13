@@ -78,8 +78,8 @@ def opendap_url(granule):
     raise ValueError("OPeNDAP adresi bulunamadı")
 
 
-def tek_ay_cek(session, base_url, deneme=3):
-    ce = "T2M[0:0][%d:%d][%d:%d]" % (I_LAT0, I_LAT1, I_LON0, I_LON1)
+def tek_ay_cek(session, base_url, deneme=3, degisken="T2M"):
+    ce = "%s[0:0][%d:%d][%d:%d]" % (degisken, I_LAT0, I_LAT1, I_LON0, I_LON1)
     url = base_url + ".dods?" + ce
     son_hata = None
     for k in range(deneme):
@@ -99,17 +99,24 @@ def tek_ay_cek(session, base_url, deneme=3):
     raise RuntimeError("%s adresi alınamadı: %s" % (base_url, son_hata))
 
 
-def indir_hizli(session=None, results=None, workers=12):
-    """OPeNDAP ile yalnızca Türkiye kutusunu iste (dosya başına yaklaşık 2 KB)."""
-    import earthaccess
-    import xarray as xr
+def indir_hizli(session=None, results=None, workers=12, short_name="M2TMNXSLV",
+                degisken="T2M", cikti_ad=None):
+    """OPeNDAP ile yalnızca Türkiye kutusunu iste (dosya başına yaklaşık 2 KB).
 
+    Varsayılan: sıcaklık (M2TMNXSLV / T2M). Yağış için: short_name="M2TMNXFLX", degisken="PRECTOTCORR".
+    """
+    import earthaccess
+
+    if cikti_ad is None:
+        adaylar = NPZ_ADAYLAR
+    else:
+        adaylar = [DATA_DIR / cikti_ad, Path.home() / cikti_ad]
     if session is None:
         earthaccess.login()
         session = earthaccess.get_requests_https_session()
     if results is None:
         results = earthaccess.search_data(
-            short_name="M2TMNXSLV", version="5.12.4",
+            short_name=short_name, version="5.12.4",
             temporal=(f"{START}-01-01", f"{END}-12-31"))
     print(f"Bulunan dosya sayısı: {len(results)} (beklenen: {(END - START + 1) * 12})")
     if not results:
@@ -121,16 +128,22 @@ def indir_hizli(session=None, results=None, workers=12):
              LON0 + I_LON0 * DLON, LON0 + I_LON1 * DLON, N_LAT, N_LON))
 
     # Önce tek dosyayı seri dene: hata varsa hemen ve açık şekilde görürsün, oturum çerezi de oluşur.
-    ilk = tek_ay_cek(session, urls[0])
-    print("Deneme dosyası tamam. Ortalama T2M = %.2f K (beklenen yaklaşık 270-290)" % ilk.mean())
-    if not (230 < ilk.mean() < 320):
+    ilk = tek_ay_cek(session, urls[0], degisken=degisken)
+    if degisken == "T2M":
+        print("Deneme dosyası tamam. Ortalama T2M = %.2f K (beklenen yaklaşık 270-290)" % ilk.mean())
+        makul = 230 < ilk.mean() < 320
+    else:   # yağış akısı kg m-2 s-1: Türkiye için yaklaşık 2e-5 (1,7 mm/gün)
+        print("Deneme dosyası tamam. Ortalama %s = %.3g kg m-2 s-1 = %.2f mm/gün (beklenen yaklaşık 0,5-4 mm/gün)"
+              % (degisken, ilk.mean(), ilk.mean() * 86400))
+        makul = 0 <= ilk.mean() < 5e-4
+    if not makul:
         raise SystemExit("Deneme değeri mantıksız, durdum.")
 
     sonuc = {0: ilk}
     bitti = [1]
 
     def is_(i):
-        arr = tek_ay_cek(session, urls[i])
+        arr = tek_ay_cek(session, urls[i], degisken=degisken)
         bitti[0] += 1
         if bitti[0] % 50 == 0:
             print(f"  {bitti[0]}/{len(urls)} tamam", flush=True)
@@ -153,10 +166,10 @@ def indir_hizli(session=None, results=None, workers=12):
     DATA_DIR.mkdir(exist_ok=True)
     # netCDF4 Windows'ta Türkçe karakterli yollara (Ö, İ, Ş...) yazamaz ("Permission denied" der).
     # Bu yüzden sonuç numpy .npz olarak kaydedilir: Python dosyayı kendisi açar, yol sorunu olmaz.
-    for p in NPZ_ADAYLAR:
+    for p in adaylar:
         try:
             with open(p, "wb") as f:
-                np.savez(f, T2M=veri_arr, time=zaman_arr, lat=lat, lon=lon)
+                np.savez(f, **{degisken: veri_arr}, time=zaman_arr, lat=lat, lon=lon)
             print("Kaydedildi:", p, "| şekil:", veri_arr.shape)
             break
         except OSError as e:
@@ -310,5 +323,8 @@ if __name__ == "__main__":
         indir_hizli()
     if adim == "indir_yavas":
         indir_yavas()
+    if adim == "indir_yagis":
+        indir_hizli(short_name="M2TMNXFLX", degisken="PRECTOTCORR",
+                    cikti_ad="merra2_prectotcorr_turkiye.npz")
     if adim in ("analiz", "hepsi"):
         analiz()

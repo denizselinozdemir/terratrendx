@@ -527,6 +527,134 @@ def yagis_sayfasi():
     )
 
 
+def nasa_sayfasi(degisken):
+    """NASA MERRA-2 sayfası. degisken: 'sicaklik' ya da 'yagis'. CSV'ler merra2_tam.py ile üretilir."""
+    sic = degisken == "sicaklik"
+    pre = f"merra2_{degisken}_"
+    ulusal = load_csv(pre + "turkiye_yillik.csv")
+    ulusal_egilim = load_csv(pre + "ulusal_egilim.csv")
+    bolgesel = load_csv(pre + "bolgesel_yillik.csv")
+    bolgesel_egilim = load_csv(pre + "bolgesel_egilim.csv")
+    if any(f is None for f in (ulusal, ulusal_egilim, bolgesel, bolgesel_egilim)):
+        st.info("NASA MERRA-2 analizi henüz hazırlanmadı: `merra2_*.csv` dosyaları data klasöründe bulunamadı. "
+                "Yukarıdaki «Veri kaynağı» seçiminden ERA5-Land kaynağını kullanabilirsiniz.")
+        return
+    val_col = "sicaklik_C" if sic else "yagis_mm"
+    birim = "°C" if sic else "mm"
+    ad = "Sıcaklık" if sic else "Yağış"
+    st.header(f"Türkiye Genelinde {ad} Değişimi (NASA MERRA-2)")
+    if sic:
+        st.info("Veri kaynağı: **NASA MERRA-2** (GMAO, GES DISC) · Ürün: M2TMNXSLV · Değişken: 2 metre hava "
+                "sıcaklığı (T2M) · Dönem: 1980–2025")
+        explain("Bu değişken nedir? (2 metre hava sıcaklığı)",
+                "**2 metre hava sıcaklığı**, yerden yaklaşık 2 metre yükseklikteki hava sıcaklığıdır. "
+                "MERRA-2, NASA'nın uydu ve yer gözlemlerini bir atmosfer modeliyle birleştirdiği "
+                "yeniden analiz veri setidir (1980'den bugüne). Yıllık ortalama, ayların gün sayısıyla "
+                "ağırlıklı ortalamasıdır. Türkiye ve bölge ortalamaları, hücre merkezi sınırın içinde olan "
+                "ızgara hücrelerinden enlem kosinüsü ağırlığıyla hesaplanmıştır.")
+    else:
+        st.info("Veri kaynağı: **NASA MERRA-2** (GMAO, GES DISC) · Ürün: M2TMNXFLX · Değişken: düzeltilmiş "
+                "toplam yağış (PRECTOTCORR) · Yıllık toplam (mm) · Dönem: 1980–2025")
+        explain("Bu değişken nedir? (düzeltilmiş toplam yağış)",
+                "**PRECTOTCORR**, MERRA-2'nin gözlemlerle (CPC ve GPCP yağış ürünleri) düzeltilmiş "
+                "yüzey yağış akısıdır; yağmur ve karı kapsar. Akış birimi kg/m²/s'dir; 86 400 ile "
+                "çarpılarak mm/gün, ay uzunluğuyla çarpılıp toplanarak yıllık mm elde edilir. "
+                "**1 mm yağış** = metrekareye 1 litre su. Gözlemle düzeltme yağışı doğrudan model "
+                "çıktısına göre daha güvenilir kılar, ancak bu hâlâ bir yeniden analiz ürünüdür.")
+    row = ulusal_egilim.iloc[0]
+    fmt = (lambda v: f"{v:+.3f}") if sic else (lambda v: f"{v:+.1f}")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Ortalama" if sic else "Ortalama yıllık yağış",
+              f"{row['ortalama']:.2f} °C" if sic else f"{row['ortalama']:.0f} mm")
+    m2.metric("Uzun dönem eğilimi (HAC)", f"{fmt(row['hac_egim_on_yil'])} {birim} / 10 yıl")
+    m3.metric("Ortalamaya göre değişim", f"{row['yuzde_on_yil']:+.2f} % / 10 yıl")
+
+    ulusal["yil"] = pd.to_numeric(ulusal["yil"], errors="coerce")
+    ulusal[val_col] = pd.to_numeric(ulusal[val_col], errors="coerce")
+    ulusal = ulusal.dropna(subset=["yil", val_col]).sort_values("yil")
+    y0, y1 = int(ulusal["yil"].min()), int(ulusal["yil"].max())
+    st.subheader(f"Türkiye Yıllık {'Ortalama Sıcaklığı' if sic else 'Toplam Yağışı'}")
+    secilen = st.slider("İncelenecek yıl aralığını seçin", min_value=y0, max_value=y1,
+                        value=(y0, y1), key=f"nasa_{degisken}_range")
+    sec = ulusal[ulusal["yil"].between(*secilen)].copy()
+    baslik = f"Türkiye Yıllık {'Ortalama Sıcaklık' if sic else 'Toplam Yağış'} (NASA MERRA-2)"
+    if sic:
+        plot_temperature_trend(sec, "yil", val_col, baslik)
+    else:
+        plot_yagis_serisi(sec, "yil", val_col, baslik)
+    if len(sec) >= MIN_STAT_YEARS:
+        sonuc = hac_slope(sec[val_col], sec["yil"])
+    else:
+        sonuc = None
+    if sonuc:
+        s1, s2, s3 = st.columns(3)
+        s1.metric("Seçilen dönemin eğimi", f"{fmt(sonuc['slope'])} {birim} / 10 yıl")
+        s2.metric("HAC düzeltilmiş p-değeri", f"{sonuc['p']:.3g}")
+        s3.metric("R²", f"{sonuc['r2']:.3f}")
+        st.caption(f"HAC %95 güven aralığı: {fmt(sonuc['lower'])} ile {fmt(sonuc['upper'])} {birim} / 10 yıl. "
+                   "Newey–West HAC, 3 gecikme.")
+    else:
+        st.warning(f"İstatistiksel analiz için en az {MIN_STAT_YEARS} yıllık veri seçilmelidir.")
+
+    st.subheader(f"Yöntemlerle eğilim ({int(row['yil_baslangic'])}–{int(row['yil_bitis'])})")
+    tablo = pd.DataFrame({
+        "Yöntem": ["HAC regresyonu", "Theil–Sen eğimi"],
+        f"Eğim ({birim} / 10 yıl)": [row["hac_egim_on_yil"], row["sen_egim_on_yil"]],
+        "%95 GA alt": [row["hac_ga_alt"], row["sen_ga_alt"]],
+        "%95 GA üst": [row["hac_ga_ust"], row["sen_ga_ust"]],
+    })
+    st.dataframe(tablo.round(3), use_container_width=True, hide_index=True)
+    anlamli = "istatistiksel olarak anlamlı" if row["hac_p"] < 0.05 else "istatistiksel olarak anlamlı değil"
+    st.caption(f"HAC p-değeri {row['hac_p']:.3g}: ulusal eğilim %5 düzeyinde {anlamli}. "
+               f"Mann–Kendall (Kendall tau) = {row['kendall_tau']:.3f}, p = {row['kendall_p']:.3g}.")
+    explain("Sonuçlar nasıl okunur?", (
+            "**Eğim**, yıllık toplam yağışın her 10 yılda ortalama ne kadar (mm) değiştiğidir; **yüzde** "
+            "değeri bunu ortalamaya oranlar. Yağış yıldan yıla çok dalgalandığı için güven aralıkları geniştir "
+            "ve aralık sıfırı içeriyorsa eğilim istatistiksel olarak anlamlı değildir. Bu, 'eğilim yok' demek "
+            "değil, verinin bunu güvenle ayırt edemediği anlamına gelir. **HAC**, **Theil–Sen** ve "
+            "**Mann–Kendall** yöntemlerinin aynı yönü göstermesi sonuca güveni artırır.") if not sic else
+            "**Eğim**, sıcaklığın her 10 yılda ortalama ne kadar değiştiğidir. **Güven aralığı** sıfırı "
+            "içermiyorsa eğilim istatistiksel olarak anlamlıdır. **HAC** yöntemi, ardışık yılların "
+            "birbirine benzemesini (otokorelasyon) hesaba katar. **Theil–Sen** ve **Mann–Kendall** "
+            "uç değerlere dayanıklı, dağılım varsayımı gerektirmeyen kontrollerdir. Üç yöntemin aynı "
+            "yönü göstermesi sonuca güveni artırır.")
+    st.divider()
+
+    st.header(f"Bölgelere Göre {ad} Eğilimleri (NASA MERRA-2)")
+    kolonlar = ["bolge", "ortalama", "hac_egim_on_yil", "hac_ga_alt", "hac_ga_ust",
+                "yuzde_on_yil", "sen_egim_on_yil", "BH_duzeltilmis_p", "anlamli_mi"]
+    show_table(bolgesel_egilim, kolonlar)
+    if sic:
+        plot_horizontal_bars(bolgesel_egilim, "bolge", "hac_egim_on_yil",
+                             "Bölgelere Göre Isınma Hızı (NASA MERRA-2)", "Eğim (°C / 10 yıl)")
+    else:
+        plot_horizontal_bars(bolgesel_egilim, "bolge", "yuzde_on_yil",
+                             "Bölgelere Göre Yağış Eğilimi (ortalamaya göre değişim)", "Değişim (% / 10 yıl)")
+    st.caption("Yedi bölgenin p-değerleri Benjamini–Hochberg (BH) yöntemiyle düzeltilmiştir. MERRA-2 ızgarası "
+               "kabadır (0,5° × 0,625°, yaklaşık 55 × 55 km); küçük bölgelerde az sayıda hücre vardır.")
+    liste = sorted(bolgesel["bolge"].dropna().unique().tolist())
+    secili = st.selectbox("İncelemek istediğiniz bölgeyi seçin", liste, key=f"nasa_{degisken}_bolge")
+    veri_b = bolgesel[bolgesel["bolge"] == secili]
+    if sic:
+        plot_temperature_trend(veri_b, "yil", val_col, f"{secili} Yıllık Ortalama Sıcaklığı (NASA MERRA-2)")
+    else:
+        plot_yagis_serisi(veri_b, "yil", val_col, f"{secili} Yıllık Toplam Yağışı (NASA MERRA-2)")
+    st.divider()
+    with st.expander(f"NASA MERRA-2 {ad.lower()} analizinin sınırları"):
+        st.markdown(
+            """
+            - MERRA-2 bir **yeniden analiz** ürünüdür, istasyon ölçümü değildir. Dönem 1980–2025'tir;
+              1950'den başlayan ERA5-Land analizinden kısadır, bu yüzden eğilimlerin belirsizliği daha büyüktür.
+            - Izgara kabadır (yaklaşık 55 km); dağlık ve kıyı bölgelerinde yerel ayrıntı kaybolur.
+            - Yalnızca **yıllık** değerler incelenmiştir; mevsimsel kaymalar ve aşırı olaylar kapsam dışıdır.
+            - İstatistiksel anlamlılık tek başına neden-sonuç ilişkisini göstermez.
+            - Kırılma noktası ve bölgeler arası fark testleri yalnızca ERA5-Land sıcaklık analizinde vardır.
+            """
+        )
+    st.caption("Veri kaynağı: Global Modeling and Assimilation Office (GMAO), NASA GES DISC — "
+               "MERRA-2 tavg1/tavgM ürünleri (M2TMNXSLV, M2TMNXFLX). Erişim: OPeNDAP, NASA Earthdata.")
+
+
 # ------------------------- BAŞLIK VE TANITIM -------------------------
 
 st.title("🌍 TerraTrendX")
@@ -535,9 +663,10 @@ st.markdown(
     """
     **Türkiye'nin uzun dönemli sıcaklık ve yağış değişimini keşfedin.**
 
-    TerraTrendX, Copernicus ERA5-Land yeniden analiz verilerini kullanarak
-    Türkiye'nin ve yedi coğrafi bölgesinin 1950–2025 dönemindeki 2 metre
-    hava sıcaklığı ve toplam yağış eğilimlerini inceler.
+    TerraTrendX, **NASA MERRA-2** (1980–2025) ve Copernicus **ERA5-Land** (1950–2025)
+    yeniden analiz verilerini kullanarak Türkiye'nin ve yedi coğrafi bölgesinin
+    2 metre hava sıcaklığı ve toplam yağış eğilimlerini inceler. Veri kaynağını
+    istediğiniz zaman değiştirebilirsiniz.
     """
 )
 with st.expander("🇬🇧 English summary"):
@@ -549,8 +678,9 @@ with st.expander("🇬🇧 English summary"):
         statistically significant (HAC regression, Mann–Kendall, Theil–Sen and confidence intervals).
         The interface is in Turkish; every statistic comes with a plain-language explanation.
 
-        **Data:** ERA5-Land reanalysis (Copernicus), with an independent cross-check of temperature
-        against **NASA MERRA-2** (1980–2025).
+        **Data:** two independent reanalyses, selectable in the app: **NASA MERRA-2** (GES DISC;
+        temperature `T2M` and bias-corrected precipitation `PRECTOTCORR`, 1980–2025) and
+        **ERA5-Land** (Copernicus, 1950–2025, with break-point analysis).
 
         **Main findings:** national temperature rose by about **+0.21 °C per decade** (1950–2025,
         significant), with a much faster rise after about 1992 (break year uncertainty roughly
@@ -581,6 +711,16 @@ if secim is None:
             "karşılaştırma, bölgesel eğilimler ve sıcaklıkla ilişki."
         )
     st.info("Başlamak için yukarıdan bir konu seçin.")
+    st.stop()
+kaynak = st.radio(
+    "Veri kaynağı",
+    ["🛰️ NASA MERRA-2 (1980–2025)", "🌍 ERA5-Land (1950–2025)"],
+    horizontal=True, key="ana_kaynak",
+    help="NASA MERRA-2: NASA GMAO yeniden analizi. ERA5-Land: Copernicus yeniden analizi; "
+         "daha uzun dönem ve kırılma noktası analizi içerir.",
+)
+if kaynak.startswith("🛰️"):
+    nasa_sayfasi("yagis" if secim == "🌧️ Yağış" else "sicaklik")
     st.stop()
 if secim == "🌧️ Yağış":
     yagis_sayfasi()
@@ -1147,7 +1287,8 @@ else:
 st.caption(
     "Harita, her bölgenin 1950–2025 doğrusal ısınma hızını gösterir. Bölgeler "
     "arasındaki farkların çoğu istatistiksel olarak ayırt edilemez; anlamlı "
-    "farklar için \"Bölgeler Arası Isınma Eğilimi Farkları\" bölümüne bakın.")
+    "farklar için \"Bölgeler Arası Isınma Eğilimi Farkları\" bölümüne bakın."
+)
 
 
 # ------------------------- BULGULAR VE SINIRLILIKLAR -------------------------
@@ -1199,7 +1340,8 @@ with st.expander("Yorumlama sınırları ve dikkat edilmesi gerekenler"):
         - İkinci dereceden modelin uç yıllardaki eğimleri güvenilir değildir ve
           geçmişteki hızlanma, gelecekte de süreceğini kanıtlamaz.
         - İstatistiksel anlamlılık tek başına neden-sonuç ilişkisini göstermez.
-        """)
+        """
+    )
 st.divider()
 
 
@@ -1209,7 +1351,8 @@ st.header("Verileri İndir")
 st.write(
     "Uygulamada kullanılan yıllık sıcaklık serilerini ve istatistiksel "
     "sonuç tablolarını CSV biçiminde indirebilirsiniz. Dosyalar Excel'de "
-    "Türkçe karakterlerin doğru açılması için UTF-8-SIG kodlamasıyla hazırlanır.")
+    "Türkçe karakterlerin doğru açılması için UTF-8-SIG kodlamasıyla hazırlanır."
+)
 
 def csv_download_button(label, frame, filename, key):
     if frame is None:
@@ -1222,7 +1365,8 @@ def csv_download_button(label, frame, filename, key):
         file_name=filename,
         mime="text/csv",
         key=key,
-        use_container_width=True,)
+        use_container_width=True,
+    )
 
 download_col1, download_col2 = st.columns(2)
 with download_col1:
@@ -1230,33 +1374,39 @@ with download_col1:
         "Türkiye yıllık sıcaklık verisini indir",
         turkiye,
         "turkiye_yillik_sicaklik.csv",
-        "download_national",)
+        "download_national",
+    )
     csv_download_button(
         "Bölgesel yıllık sıcaklık verilerini indir",
         bolgesel_yillik,
         "bolgesel_yillik_sicaklik.csv",
-        "download_regional_annual",)
+        "download_regional_annual",
+    )
     csv_download_button(
         "Bölgesel HAC sonuçlarını indir",
         bolgesel_hac,
         "bolgesel_hac_sonuclari.csv",
-        "download_regional_hac",)
+        "download_regional_hac",
+    )
 with download_col2:
     csv_download_button(
         "Bölgesel eğilim özetini indir",
         bolgeler,
         "bolgesel_sicaklik_egilimleri.csv",
-        "download_regional_summary",)
+        "download_regional_summary",
+    )
     csv_download_button(
         "HAC duyarlılık sonuçlarını indir",
         hac_duyarlilik,
         "hac_duyarlilik_sonuclari.csv",
-        "download_hac_sensitivity",)
+        "download_hac_sensitivity",
+    )
     csv_download_button(
         "Bölgesel eğim karşılaştırmalarını indir",
         bolge_karsilastirma,
         "bolgesel_kirilma_sonrasi_karsilastirma.csv",
-        "download_pairwise",)
+        "download_pairwise",
+    )
 
 optional_col1, optional_col2 = st.columns(2)
 with optional_col1:
@@ -1265,19 +1415,22 @@ with optional_col1:
             "Ulusal kırılma analizi sonuçlarını indir",
             national_break,
             "kirilma_noktasi_sonuclari.csv",
-            "download_national_break",)
+            "download_national_break",
+        )
 with optional_col2:
     if bootstrap_break is not None:
         csv_download_button(
             "Bootstrap sonuçlarını indir",
             bootstrap_break,
             "bootstrap_kirilma_sonuclari.csv",
-            "download_bootstrap",)
+            "download_bootstrap",
+        )
 
 st.caption(
     "İndirilen CSV dosyaları analiz tablolarını içerir; ham ERA5-Land NetCDF "
     "verisinin yerine geçmez. Grafikler ve istatistiksel sonuçlar uygulamada "
-    "gösterilen analiz kapsamına göre yorumlanmalıdır.")
+    "gösterilen analiz kapsamına göre yorumlanmalıdır."
+)
 st.divider()
 
 
@@ -1295,4 +1448,5 @@ st.divider()
 st.caption(
     "Veri kaynağı: Copernicus Climate Change Service (C3S), ERA5-Land Monthly "
     "Averaged Data. Analiz değişkeni 2 metre hava sıcaklığıdır (t2m). Yeniden "
-    "analiz verileri doğrudan istasyon gözlemleriyle aynı şey değildir.")
+    "analiz verileri doğrudan istasyon gözlemleriyle aynı şey değildir."
+)
