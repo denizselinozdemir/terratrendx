@@ -19,6 +19,7 @@ How has Turkey's annual mean 2 m air temperature changed between 1950 and 2025? 
 is the trend, is it statistically significant, and does it differ across regions?
 
 ## Data
+  | ERA5-Land monthly total precipitation (`tp`), annual totals, 1950–2025 | Precipitation analysis |
 
 | Dataset | Use |
 |---|---|
@@ -47,6 +48,7 @@ cosine-latitude weights, and aggregated to annual means weighted by the days in 
 - All seven regions show a positive, significant trend (0.18 to 0.23 °C per decade).
 - Cross-check, 1980–2025: ERA5-Land +0.53 vs MERRA-2 +0.44 °C per decade (confidence
   intervals overlap); correlation of detrended annual series 0.98.
+    - Precipitation (annual total, ERA5-Land): -9.0 mm per decade (about -1.3%), 95% CI -22.7 to +4.6, p = 0.19. No statistically significant trend nationally, and none of the seven regions is significant after multiple-test correction.
 
 ## Limitations
 
@@ -56,6 +58,7 @@ cosine-latitude weights, and aggregated to annual means weighted by the days in 
   differences are descriptive, not formal tests.
 - Slopes of the quadratic model at the ends of the period are not reliable.
 - A statistically significant trend does not by itself identify a cause.
+  - Precipitation is a model product, less certain than temperature (ERA5-Land tends to overestimate precipitation in mountainous areas). Break-year and MERRA-2 cross-check analyses were done for temperature only.
 
 ## Run locally
 
@@ -70,9 +73,6 @@ streamlit run app.py
 - `data/`: result tables (CSV), figures (PNG), region polygons and the MERRA-2 Turkey subset.
 - `merra2_crosscheck.py`: downloads MERRA-2 via OPeNDAP (needs an Earthdata login) and compares
   it with ERA5-Land. Needs `earthaccess`, `xarray`, `geopandas` in addition to the app's packages.
+    - `yagis_isle.py`: builds annual precipitation series and trends from ERA5-Land `tp` (needs the downloaded NetCDF, not included in the repo).
 
 ## Data credits
-
-Contains modified Copernicus Climate Change Service information (ERA5-Land) and NASA GMAO
-MERRA-2 data distributed by the NASA GES DISC. See the dataset landing pages for the
-official citation.
