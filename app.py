@@ -337,19 +337,227 @@ sonuçlar betimleyici kabul edilmelidir.
 """
 
 
+# ------------------------- YAĞIŞ SAYFASI -------------------------
+
+EXPL_YAGIS = """
+**Yıllık toplam yağış (mm).** ERA5-Land'in aylık ortalama günlük yağışı, ayın gün sayısıyla
+çarpılıp 12 ay toplanarak yıllık toplama çevrilir. 1 mm yağış, metrekareye 1 litre su demektir.
+
+**Eğilim ve yüzde değişim.** Eğim, yıllık toplamın 10 yılda ortalama kaç mm değiştiğini gösterir
+(+ artış, − azalış). Yüzde değişim, bu eğimin dönem ortalamasına oranıdır; ortalama yağışı çok
+farklı olan bölgeleri karşılaştırmak için daha uygundur.
+
+**Neden üç yöntem?** Yağış sıcaklıktan farklı olarak çarpık dağılır: bir iki aşırı yağışlı ya da
+kurak yıl eğimi belirgin biçimde etkileyebilir. HAC regresyonu (sıcaklıktaki gibi) otokorelasyonu
+hesaba katar. Theil–Sen eğimi ve Kendall testi ise uç yıllara karşı daha dayanıklıdır. Üç
+yöntem aynı yönü gösteriyorsa sonuç daha güvenilirdir; göstermiyorsa eğilim belirsizdir.
+
+**Yağış neden daha belirsiz?** Yıldan yıla değişkenlik, ortalamaya göre sıcaklıktan çok daha
+büyüktür; bu yüzden aynı uzunluktaki seride bir eğilimi yağışta ayırt etmek zordur ve güven
+aralıkları geniş çıkar. Eğimin anlamlı olmaması "eğilim yok" demek değildir; yalnızca verinin
+bunu güvenle ayırt edemediğini gösterir.
+"""
+
+
+def plot_yagis_serisi(frame, year_col, val_col, title):
+    plot_data = frame[[year_col, val_col]].apply(pd.to_numeric, errors="coerce").dropna()
+    plot_data = plot_data.sort_values(year_col)
+    if len(plot_data) < 2:
+        st.warning("Grafik oluşturmak için yeterli veri bulunamadı.")
+        return
+    x = plot_data[year_col].to_numpy(dtype=float)
+    y = plot_data[val_col].to_numpy(dtype=float)
+    fig, ax = plt.subplots(figsize=(11, 5))
+    ax.bar(x, y, width=0.8, alpha=0.55, label="Yıllık toplam yağış")
+    ax.plot(x, np.polyval(np.polyfit(x, y, 1), x), linestyle="--", linewidth=2.2,
+            label="Doğrusal eğilim (OLS)")
+    ax.set_title(title, fontsize=14, fontweight="bold", pad=14)
+    ax.set_xlabel("Yıl")
+    ax.set_ylabel("Toplam yağış (mm / yıl)")
+    ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True, nbins=9))
+    ax.xaxis.set_major_formatter(mticker.StrMethodFormatter("{x:.0f}"))
+    ax.grid(axis="y", alpha=0.25)
+    ax.set_axisbelow(True)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
+
+
+def yagis_sayfasi():
+    ulusal = load_csv("yagis_turkiye_yillik.csv")
+    ulusal_egilim = load_csv("yagis_ulusal_egilim.csv")
+    bolgesel = load_csv("yagis_bolgesel_yillik.csv")
+    bolgesel_egilim = load_csv("yagis_bolgesel_egilim.csv")
+    if any(f is None for f in (ulusal, ulusal_egilim, bolgesel, bolgesel_egilim)):
+        st.info("Yağış analizi henüz hazırlanmadı: `yagis_*.csv` dosyaları data klasöründe bulunamadı.")
+        return
+
+    st.header("Türkiye Genelinde Yağış Değişimi")
+    st.info("Veri türü: ERA5-Land yeniden analiz verisi · Değişken: toplam yağış (tp) · "
+            "Yıllık toplam (mm) · Dönem: 1950–2025")
+    row = ulusal_egilim.iloc[0]
+    p1, p2, p3 = st.columns(3)
+    p1.metric("Ortalama yıllık yağış", f"{row['ortalama_mm']:.0f} mm")
+    p2.metric("Uzun dönem eğilimi (HAC)", f"{row['hac_egim_mm_on_yil']:+.1f} mm / 10 yıl")
+    p3.metric("Ortalamaya göre değişim", f"{row['yuzde_on_yil']:+.1f} % / 10 yıl")
+
+    year_col, val_col = "yil", "yagis_mm"
+    ulusal[year_col] = pd.to_numeric(ulusal[year_col], errors="coerce")
+    ulusal[val_col] = pd.to_numeric(ulusal[val_col], errors="coerce")
+    ulusal = ulusal.dropna(subset=[year_col, val_col]).sort_values(year_col)
+    y0, y1 = int(ulusal[year_col].min()), int(ulusal[year_col].max())
+
+    st.subheader("Türkiye Yıllık Toplam Yağışı")
+    secilen = st.slider("İncelenecek yıl aralığını seçin", min_value=y0, max_value=y1,
+                        value=(y0, y1), key="yagis_year_range")
+    sec = ulusal[ulusal[year_col].between(*secilen)].copy()
+    plot_yagis_serisi(sec, year_col, val_col, "Türkiye Yıllık Toplam Yağış (ERA5-Land)")
+    st.caption("Çubuklar yıllık toplam yağışı, kesikli çizgi doğrusal eğilimi gösterir. "
+               "Yağış yıldan yıla çok dalgalandığı için eğilim çizgisi etrafındaki saçılım büyüktür.")
+    sonuc = None
+    if len(sec) >= MIN_STAT_YEARS:
+        sonuc = hac_slope(sec[val_col], sec[year_col])
+    if sonuc:
+        s1, s2, s3 = st.columns(3)
+        s1.metric("Seçilen dönemin eğimi", f"{sonuc['slope']:+.1f} mm / 10 yıl")
+        s2.metric("HAC düzeltilmiş p-değeri", f"{sonuc['p']:.3g}")
+        s3.metric("R²", f"{sonuc['r2']:.3f}")
+        st.caption(f"HAC %95 güven aralığı: {sonuc['lower']:+.1f} ile {sonuc['upper']:+.1f} mm / 10 yıl. "
+                   "Newey–West HAC, 3 gecikme.")
+    else:
+        st.warning(f"İstatistiksel analiz için en az {MIN_STAT_YEARS} yıllık veri seçilmelidir.")
+
+    st.subheader("Üç yöntemle eğilim (1950–2025)")
+    tablo = pd.DataFrame({
+        "Yöntem": ["HAC regresyonu", "Theil–Sen eğimi"],
+        "Eğim (mm / 10 yıl)": [row["hac_egim_mm_on_yil"], row["sen_egim_mm_on_yil"]],
+        "%95 GA alt": [row["hac_ga_alt"], row["sen_ga_alt"]],
+        "%95 GA üst": [row["hac_ga_ust"], row["sen_ga_ust"]],
+    })
+    st.dataframe(tablo.round(2), use_container_width=True, hide_index=True)
+    anlamli = "istatistiksel olarak anlamlı" if row["hac_p"] < 0.05 else "istatistiksel olarak anlamlı değil"
+    st.caption(f"HAC p-değeri {row['hac_p']:.3g}: ulusal eğilim %5 düzeyinde {anlamli}. "
+               f"Kendall tau = {row['kendall_tau']:.3f} (p = {row['kendall_p']:.3g}).")
+    explain("Yağış analizi nasıl okunur?", EXPL_YAGIS)
+    st.divider()
+
+    st.header("Bölgelere Göre Yağış Eğilimleri")
+    show_table(bolgesel_egilim, [
+        "bolge", "ortalama_mm", "hac_egim_mm_on_yil", "hac_ga_alt", "hac_ga_ust",
+        "yuzde_on_yil", "sen_egim_mm_on_yil", "BH_duzeltilmis_p", "anlamli_mi",
+    ])
+    plot_horizontal_bars(bolgesel_egilim, "bolge", "yuzde_on_yil",
+                         "Bölgelere Göre Yağış Eğilimi (ortalamaya göre değişim)",
+                         "Değişim (% / 10 yıl)")
+    st.caption("Yedi bölgenin p-değerleri Benjamini–Hochberg (BH) yöntemiyle düzeltilmiştir. "
+               "Bölgeler arasında eğim farklarının anlamlılığı yağış için ayrıca test edilmemiştir.")
+    bolge_listesi = sorted(bolgesel["bolge"].dropna().unique().tolist())
+    secili_bolge = st.selectbox("İncelemek istediğiniz bölgeyi seçin", bolge_listesi, key="yagis_bolge")
+    plot_yagis_serisi(bolgesel[bolgesel["bolge"] == secili_bolge], "yil", "yagis_mm",
+                      f"{secili_bolge} Yıllık Toplam Yağışı")
+    st.divider()
+
+    st.header("Sıcaklık ve Yağış Arasındaki İlişki")
+    sic = load_csv("turkiye_yillik_sicaklik.csv")
+    s_year = find_column(sic, ["yil", "year"]) if sic is not None else None
+    s_temp = find_column(sic, ["ortalama_sicaklik_C", "sicaklik_C", "temperature_C"]) if sic is not None else None
+    if s_year and s_temp:
+        sic2 = sic[[s_year, s_temp]].rename(columns={s_year: "yil", s_temp: "sicaklik_C"})
+        sic2 = sic2.apply(pd.to_numeric, errors="coerce")
+        birlesik = pd.merge(ulusal[["yil", "yagis_mm"]], sic2, on="yil").dropna().sort_values("yil")
+        if len(birlesik) >= MIN_STAT_YEARS:
+            yl = birlesik["yil"].to_numpy(dtype=float)
+            tt = birlesik["sicaklik_C"].to_numpy(dtype=float)
+            pp = birlesik["yagis_mm"].to_numpy(dtype=float)
+            r_ham = float(np.corrcoef(tt, pp)[0, 1])
+            tt_d = tt - np.polyval(np.polyfit(yl, tt, 1), yl)
+            pp_d = pp - np.polyval(np.polyfit(yl, pp, 1), yl)
+            r_dt = float(np.corrcoef(tt_d, pp_d)[0, 1])
+            r1, r2 = st.columns(2)
+            r1.metric("Korelasyon (ham seriler)", f"{r_ham:+.3f}")
+            r2.metric("Korelasyon (eğilimden arındırılmış)", f"{r_dt:+.3f}")
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.scatter(tt, pp, s=22, alpha=0.8)
+            ax.plot(np.sort(tt), np.polyval(np.polyfit(tt, pp, 1), np.sort(tt)), linestyle="--", linewidth=2)
+            ax.set_title("Yıllık Ortalama Sıcaklık ve Toplam Yağış", fontsize=14, fontweight="bold", pad=14)
+            ax.set_xlabel("Ortalama sıcaklık (°C)")
+            ax.set_ylabel("Toplam yağış (mm / yıl)")
+            ax.grid(alpha=0.25)
+            fig.tight_layout()
+            st.pyplot(fig, use_container_width=True)
+            plt.close(fig)
+            st.caption(
+                "Her nokta bir yıldır. Eğilimden arındırılmış korelasyon, iki seriden de uzun dönem eğilim "
+                "çıkarıldıktan sonra hesaplanır; yani sıcak yılların kurak ya da yağışlı olma eğilimini ölçer. "
+                "Bu ilişkinin istatistiksel anlamlılığı ayrıca test edilmemiştir ve korelasyon nedensellik "
+                "göstermez."
+            )
+        else:
+            st.warning("Sıcaklık ve yağış serileri için yeterli ortak yıl bulunamadı.")
+    else:
+        st.warning("Sıcaklık serisi okunamadı.")
+
+    with st.expander("Yağış analizinin sınırları"):
+        st.markdown(
+            """
+            - ERA5-Land yağışı bir **model ürünüdür**: atmosferik yeniden analizden gelen yağışla
+              çalıştırılır ve istasyon ya da uydu yağış ürünleriyle doğrulanmamıştır. Sıcaklıktan daha
+              belirsizdir; dağlık bölgelerde ve kıyılarda sapma gösterebilir.
+            - Yıllık yağış, yıldan yıla çok değişkendir. 76 yıllık bir seride bile, onlarca yıllık doğal
+              salınımlar eğilim tahminini etkileyebilir.
+            - Yalnızca **yıllık toplam** incelenmiştir. Mevsimsel kaymalar, yağış şiddeti, kuraklık
+              indeksleri ve aşırı olaylar bu analizin kapsamı dışındadır.
+            - Bölgesel eğilimlerin birbirinden farkı yağış için ayrıca test edilmemiştir.
+            - Kırılma noktası analizi yalnızca sıcaklık için yapılmıştır.
+            - İstatistiksel anlamlılık tek başına neden-sonuç ilişkisini göstermez.
+            """
+        )
+    st.caption(
+        "Veri kaynağı: Copernicus Climate Change Service (C3S), ERA5-Land Monthly Averaged Data. "
+        "Analiz değişkeni toplam yağıştır (tp). Yeniden analiz verileri doğrudan istasyon "
+        "gözlemleriyle aynı şey değildir."
+    )
+
+
 # ------------------------- BAŞLIK VE TANITIM -------------------------
 
 st.title("🌍 TerraTrendX")
 st.caption("CLIMATE DATA · TREND ANALYSIS · DISCOVERY")
 st.markdown(
     """
-    **Türkiye'nin uzun dönemli sıcaklık değişimini keşfedin.**
+    **Türkiye'nin uzun dönemli sıcaklık ve yağış değişimini keşfedin.**
 
     TerraTrendX, Copernicus ERA5-Land yeniden analiz verilerini kullanarak
     Türkiye'nin ve yedi coğrafi bölgesinin 1950–2025 dönemindeki 2 metre
-    hava sıcaklığı eğilimlerini inceler.
+    hava sıcaklığı ve toplam yağış eğilimlerini inceler.
     """
 )
+st.divider()
+secim = st.radio(
+    "Neyi incelemek istersiniz?",
+    ["🌡️ Sıcaklık", "🌧️ Yağış"],
+    index=None, horizontal=True, key="ana_secim",
+)
+if secim is None:
+    ca, cb = st.columns(2)
+    with ca:
+        st.markdown(
+            "**🌡️ Sıcaklık**\n\n1950–2025 yıllık ortalama hava sıcaklığı: eğilim, "
+            "istatistiksel güvenilirlik, kırılma noktası, bölgesel karşılaştırmalar ve "
+            "NASA MERRA-2 ile doğrulama."
+        )
+    with cb:
+        st.markdown(
+            "**🌧️ Yağış**\n\n1950–2025 yıllık toplam yağış: eğilim, üç yöntemle "
+            "karşılaştırma, bölgesel eğilimler ve sıcaklıkla ilişki."
+        )
+    st.info("Başlamak için yukarıdan bir konu seçin.")
+    st.stop()
+if secim == "🌧️ Yağış":
+    yagis_sayfasi()
+    st.stop()
+
 st.info("Veri türü: ERA5-Land yeniden analiz verisi · Değişken: 2 metre hava "
         "sıcaklığı (t2m) · Dönem: 1950–2025")
 
