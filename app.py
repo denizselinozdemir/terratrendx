@@ -396,6 +396,13 @@ def yagis_sayfasi():
     st.header("Türkiye Genelinde Yağış Değişimi")
     st.info("Veri türü: ERA5-Land yeniden analiz verisi · Değişken: toplam yağış (tp) · "
             "Yıllık toplam (mm) · Dönem: 1950–2025")
+    explain(
+        "Bu değişken nedir? (toplam yağış)",
+        "**Toplam yağış**, yağmur, kar ve dolu dahil yere düşen tüm suyun su eşdeğeri olarak "
+        "yüksekliğidir. **1 mm yağış**, metrekareye 1 litre su demektir. Yıllık toplam, 12 aylık "
+        "yağışın toplamıdır. Yeniden analizlerde yağış doğrudan ölçülmez, model tarafından "
+        "hesaplanır; bu yüzden sıcaklığa göre daha belirsizdir.",
+    )
     row = ulusal_egilim.iloc[0]
     p1, p2, p3 = st.columns(3)
     p1.metric("Ortalama yıllık yağış", f"{row['ortalama_mm']:.0f} mm")
@@ -533,6 +540,27 @@ st.markdown(
     hava sıcaklığı ve toplam yağış eğilimlerini inceler.
     """
 )
+with st.expander("🇬🇧 English summary"):
+    st.markdown(
+        """
+        **TerraTrendX** lets you explore how Turkey's **temperature** and **precipitation** changed
+        between 1950 and 2025, nationally and across its seven geographic regions. Choose a variable,
+        see its annual time series, the rate of change per decade, and whether the change is
+        statistically significant (HAC regression, Mann–Kendall, Theil–Sen and confidence intervals).
+        The interface is in Turkish; every statistic comes with a plain-language explanation.
+
+        **Data:** ERA5-Land reanalysis (Copernicus), with an independent cross-check of temperature
+        against **NASA MERRA-2** (1980–2025).
+
+        **Main findings:** national temperature rose by about **+0.21 °C per decade** (1950–2025,
+        significant), with a much faster rise after about 1992 (break year uncertainty roughly
+        1985–1999). All seven regions warmed significantly. **Precipitation** shows no statistically
+        significant trend (about −9 mm per decade, p ≈ 0.19), and none of the regions is significant
+        after multiple-test correction. NASA MERRA-2 gives a similar temperature trend over 1980–2025.
+
+        Code and data: github.com/denizselinozdemir/terratrendx
+        """
+    )
 st.divider()
 secim = st.radio(
     "Neyi incelemek istersiniz?",
@@ -560,6 +588,15 @@ if secim == "🌧️ Yağış":
 
 st.info("Veri türü: ERA5-Land yeniden analiz verisi · Değişken: 2 metre hava "
         "sıcaklığı (t2m) · Dönem: 1950–2025")
+explain(
+    "Bu değişken nedir? (2 metre hava sıcaklığı)",
+    "**2 metre hava sıcaklığı**, yerden yaklaşık 2 metre yükseklikte ölçülen hava sıcaklığıdır; "
+    "hava durumu istasyonlarının bildirdiği standart sıcaklık budur. Yer yüzeyinin (toprak, kaya, "
+    "deniz yüzeyinin) kendi sıcaklığından farklıdır. Yeniden analizlerde bu değer bir model ile "
+    "uydu ve yer gözlemleri birleştirilerek tüm ızgara hücreleri için hesaplanır. "
+    "**Yıllık ortalama**, 12 aylık ortalamaların ay uzunluğuna göre ağırlıklı ortalamasıdır; "
+    "böylece mevsimsel döngü eğilim analizini bozmaz.",
+)
 
 with st.expander("Bu sayfayı nasıl okumalıyım? (kısa rehber)", expanded=False):
     st.markdown(QUICK_GUIDE)
@@ -668,6 +705,22 @@ else:
         "seçilmelidir. Kısa dönemlerde eğim doğal dalgalanmalardan çok etkilenir."
     )
 explain("Bu sayıları nasıl yorumlamalıyım?", EXPL_METRICS)
+
+st.subheader("Üç yöntemle ulusal eğilim (1950–2025)")
+# Not: Aşağıdaki değerler analiz çıktısından alınmış sabit değerlerdir.
+# Analiz yeniden çalıştırılırsa burası da güncellenmelidir.
+method_table = pd.DataFrame({
+    "Yöntem": ["OLS + HAC (Newey–West)", "Theil–Sen eğimi", "Mann–Kendall testi"],
+    "Eğim (°C / 10 yıl)": ["+0,209", "+0,233", "—"],
+    "%95 güven aralığı": ["0,107 – 0,311", "0,149 – 0,310", "—"],
+    "Test sonucu": ["p = 6,2 × 10⁻⁵", "—", "tau = 0,378; p = 1,3 × 10⁻⁶"],
+})
+st.dataframe(method_table, use_container_width=True, hide_index=True)
+st.caption(
+    "Üç farklı yöntem de aynı sonuca varıyor: Türkiye'nin yıllık ortalama sıcaklığındaki artış "
+    "istatistiksel olarak anlamlı. Mann–Kendall ve Theil–Sen, uç yıllara karşı daha dayanıklı "
+    "parametrik olmayan yöntemlerdir."
+)
 st.divider()
 
 
@@ -1094,8 +1147,7 @@ else:
 st.caption(
     "Harita, her bölgenin 1950–2025 doğrusal ısınma hızını gösterir. Bölgeler "
     "arasındaki farkların çoğu istatistiksel olarak ayırt edilemez; anlamlı "
-    "farklar için \"Bölgeler Arası Isınma Eğilimi Farkları\" bölümüne bakın."
-)
+    "farklar için \"Bölgeler Arası Isınma Eğilimi Farkları\" bölümüne bakın.")
 
 
 # ------------------------- BULGULAR VE SINIRLILIKLAR -------------------------
@@ -1147,8 +1199,7 @@ with st.expander("Yorumlama sınırları ve dikkat edilmesi gerekenler"):
         - İkinci dereceden modelin uç yıllardaki eğimleri güvenilir değildir ve
           geçmişteki hızlanma, gelecekte de süreceğini kanıtlamaz.
         - İstatistiksel anlamlılık tek başına neden-sonuç ilişkisini göstermez.
-        """
-    )
+        """)
 st.divider()
 
 
@@ -1158,8 +1209,7 @@ st.header("Verileri İndir")
 st.write(
     "Uygulamada kullanılan yıllık sıcaklık serilerini ve istatistiksel "
     "sonuç tablolarını CSV biçiminde indirebilirsiniz. Dosyalar Excel'de "
-    "Türkçe karakterlerin doğru açılması için UTF-8-SIG kodlamasıyla hazırlanır."
-)
+    "Türkçe karakterlerin doğru açılması için UTF-8-SIG kodlamasıyla hazırlanır.")
 
 def csv_download_button(label, frame, filename, key):
     if frame is None:
@@ -1172,8 +1222,7 @@ def csv_download_button(label, frame, filename, key):
         file_name=filename,
         mime="text/csv",
         key=key,
-        use_container_width=True,
-    )
+        use_container_width=True,)
 
 download_col1, download_col2 = st.columns(2)
 with download_col1:
@@ -1181,39 +1230,33 @@ with download_col1:
         "Türkiye yıllık sıcaklık verisini indir",
         turkiye,
         "turkiye_yillik_sicaklik.csv",
-        "download_national",
-    )
+        "download_national",)
     csv_download_button(
         "Bölgesel yıllık sıcaklık verilerini indir",
         bolgesel_yillik,
         "bolgesel_yillik_sicaklik.csv",
-        "download_regional_annual",
-    )
+        "download_regional_annual",)
     csv_download_button(
         "Bölgesel HAC sonuçlarını indir",
         bolgesel_hac,
         "bolgesel_hac_sonuclari.csv",
-        "download_regional_hac",
-    )
+        "download_regional_hac",)
 with download_col2:
     csv_download_button(
         "Bölgesel eğilim özetini indir",
         bolgeler,
         "bolgesel_sicaklik_egilimleri.csv",
-        "download_regional_summary",
-    )
+        "download_regional_summary",)
     csv_download_button(
         "HAC duyarlılık sonuçlarını indir",
         hac_duyarlilik,
         "hac_duyarlilik_sonuclari.csv",
-        "download_hac_sensitivity",
-    )
+        "download_hac_sensitivity",)
     csv_download_button(
         "Bölgesel eğim karşılaştırmalarını indir",
         bolge_karsilastirma,
         "bolgesel_kirilma_sonrasi_karsilastirma.csv",
-        "download_pairwise",
-    )
+        "download_pairwise",)
 
 optional_col1, optional_col2 = st.columns(2)
 with optional_col1:
@@ -1222,22 +1265,19 @@ with optional_col1:
             "Ulusal kırılma analizi sonuçlarını indir",
             national_break,
             "kirilma_noktasi_sonuclari.csv",
-            "download_national_break",
-        )
+            "download_national_break",)
 with optional_col2:
     if bootstrap_break is not None:
         csv_download_button(
             "Bootstrap sonuçlarını indir",
             bootstrap_break,
             "bootstrap_kirilma_sonuclari.csv",
-            "download_bootstrap",
-        )
+            "download_bootstrap",)
 
 st.caption(
     "İndirilen CSV dosyaları analiz tablolarını içerir; ham ERA5-Land NetCDF "
     "verisinin yerine geçmez. Grafikler ve istatistiksel sonuçlar uygulamada "
-    "gösterilen analiz kapsamına göre yorumlanmalıdır."
-)
+    "gösterilen analiz kapsamına göre yorumlanmalıdır.")
 st.divider()
 
 
@@ -1255,5 +1295,4 @@ st.divider()
 st.caption(
     "Veri kaynağı: Copernicus Climate Change Service (C3S), ERA5-Land Monthly "
     "Averaged Data. Analiz değişkeni 2 metre hava sıcaklığıdır (t2m). Yeniden "
-    "analiz verileri doğrudan istasyon gözlemleriyle aynı şey değildir."
-)
+    "analiz verileri doğrudan istasyon gözlemleriyle aynı şey değildir.")
